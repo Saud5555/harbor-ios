@@ -140,6 +140,57 @@ final class AddonClientTests: XCTestCase {
     }
 }
 
+final class AddonManifestResourceTests: XCTestCase {
+    func testAppliesResourceSpecificTypeAndPrefixConstraints() {
+        let manifest = makeManifest(resources: [
+            .detailed(AddonResourceDef(
+                name: "stream",
+                types: ["series"],
+                idPrefixes: ["tt"]
+            )),
+        ])
+
+        XCTAssertTrue(manifest.supports(resource: "stream", type: "series", id: "tt123:1:2"))
+        XCTAssertFalse(manifest.supports(resource: "stream", type: "movie", id: "tt123"))
+        XCTAssertFalse(manifest.supports(resource: "stream", type: "series", id: "tmdb:tv:123"))
+    }
+
+    func testConfigurationRequiredAddonDoesNotAdvertiseUsableResources() {
+        let manifest = makeManifest(
+            resources: [.named("subtitles")],
+            configurationRequired: true
+        )
+
+        XCTAssertFalse(manifest.advertises(resource: "subtitles"))
+        XCTAssertFalse(manifest.supports(resource: "subtitles", type: "movie", id: "tt123"))
+    }
+
+    private func makeManifest(
+        resources: [AddonResource],
+        configurationRequired: Bool = false
+    ) -> AddonManifest {
+        AddonManifest(
+            id: "test.addon",
+            name: "Test Addon",
+            version: "1.0.0",
+            description: nil,
+            logo: nil,
+            background: nil,
+            contactEmail: nil,
+            types: nil,
+            resources: resources,
+            catalogs: nil,
+            idPrefixes: nil,
+            behaviorHints: AddonBehaviorHints(
+                adult: nil,
+                p2p: nil,
+                configurable: nil,
+                configurationRequired: configurationRequired
+            )
+        )
+    }
+}
+
 final class SubtitleAndSearchBehaviorTests: XCTestCase {
     func testCanonicalizesAddonAndEmbeddedLanguageNames() {
         XCTAssertEqual(SubtitleLanguages.canonicalCode("ger"), "de")
@@ -227,6 +278,53 @@ final class ModelBehaviorTests: XCTestCase {
             state: LibraryState()
         )
         XCTAssertGreaterThan(item.sortTimestamp, 0)
+    }
+
+    func testEpisodeCoordinatesAreParsedOnceForAllConsumers() throws {
+        let coordinates = try XCTUnwrap(EpisodeCoordinates(videoID: "tt123:2:7"))
+
+        XCTAssertEqual(coordinates.season, 2)
+        XCTAssertEqual(coordinates.episode, 7)
+        XCTAssertEqual(coordinates.label, "S2 · E7")
+        XCTAssertNil(EpisodeCoordinates(videoID: "tt123"))
+    }
+
+    func testSharedDateParserAcceptsStandardAndFractionalTimestamps() {
+        XCTAssertNotNil(HarborDate.parseISO8601("2026-08-25T12:34:56Z"))
+        XCTAssertNotNil(HarborDate.parseISO8601("2026-08-25T12:34:56.789Z"))
+        XCTAssertNotNil(HarborDate.parseCalendarDate("2026-08-25"))
+    }
+
+    func testPlaybackProgressMutationCarriesWatchTimeAcrossEpisodes() {
+        var state = LibraryState()
+        state.videoId = "tt123:1:6"
+        state.timeWatched = 42_000
+        state.overallTimeWatched = 10_000
+        state.flaggedWatched = 1
+        var item = libraryItem(state: state)
+        let target = StreamTarget(
+            metaId: "tt123",
+            type: "series",
+            title: "Episode 7",
+            videoId: "tt123:2:7",
+            base: nil,
+            metaName: "Example",
+            poster: nil,
+            background: nil
+        )
+
+        item.updatePlaybackProgress(
+            from: target,
+            offset: 5_000,
+            duration: 60_000,
+            timestamp: "2026-09-05T00:00:00Z"
+        )
+
+        XCTAssertEqual(item.state?.overallTimeWatched, 52_000)
+        XCTAssertEqual(item.state?.flaggedWatched, 0)
+        XCTAssertEqual(item.state?.timeOffset, 5_000)
+        XCTAssertEqual(item.state?.season, 2)
+        XCTAssertEqual(item.state?.episode, 7)
     }
 
     private func libraryItem(

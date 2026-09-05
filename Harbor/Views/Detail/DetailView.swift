@@ -4,22 +4,22 @@ import UIKit
 struct DetailView: View {
     let nav: MetaNavigation
 
-    @State private var fullMeta: Meta?
-    @State private var isLoadingDetail = false
-    @State private var isBookmarked = false
+    @StateObject private var viewModel: DetailViewModel
     @State private var selectedSeason: Int?
     @State private var didLogOpen = false
     @State private var moviePlaybackSessionId = UUID()
 
-    @ObservedObject private var library = LibraryStore.shared
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    private var displayMeta: Meta { fullMeta ?? nav.meta }
+    init(nav: MetaNavigation) {
+        self.nav = nav
+        _viewModel = StateObject(wrappedValue: DetailViewModel(navigation: nav))
+    }
+
+    private var displayMeta: Meta { viewModel.displayMeta }
 
     private var story: String? {
-        [fullMeta?.description, nav.meta.description]
-            .compactMap { $0 }
-            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        viewModel.story
     }
 
     private var adaptiveLayout: HarborAdaptiveLayout {
@@ -30,34 +30,19 @@ struct DetailView: View {
     }
 
     private var episodeTargetMeta: Meta {
-        let meta = displayMeta
-        return Meta(
-            id: meta.id,
-            type: meta.type,
-            name: meta.name,
-            poster: meta.poster ?? nav.meta.poster,
-            background: meta.background ?? nav.meta.background,
-            logo: meta.logo,
-            description: meta.description,
-            releaseInfo: meta.releaseInfo,
-            imdbRating: meta.imdbRating,
-            genres: meta.genres,
-            runtime: meta.runtime,
-            country: meta.country,
-            network: meta.network,
-            videos: meta.videos
-        )
+        viewModel.episodeTargetMeta
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                if adaptiveLayout == .pad {
-                    expandedHero
-                } else {
-                    compactHero
-                    compactTitleBlock
-                }
+                DetailHeroView(
+                    meta: displayMeta,
+                    fallbackPoster: nav.meta.poster,
+                    background: viewModel.fullMeta?.background ?? nav.meta.background,
+                    story: story,
+                    layout: adaptiveLayout
+                )
                 actionRow
                 aboutSection
                 if displayMeta.type == "series" {
@@ -75,12 +60,8 @@ struct DetailView: View {
         .navigationDestination(for: StreamTarget.self) { target in
             StreamsSheet(target: target)
         }
-        .task { await load() }
-        .onReceive(library.$items) { _ in
-            refreshBookmarkFlag()
-        }
+        .task { await viewModel.load() }
         .onAppear {
-            refreshBookmarkFlag()
             AnalyticsService.shared.setCurrentScreen(.detail, screenClass: "DetailView")
             if !didLogOpen {
                 didLogOpen = true
@@ -96,228 +77,13 @@ struct DetailView: View {
         }
     }
 
-    // MARK: - Data
-
-    private func load() async {
-        guard fullMeta == nil, !isLoadingDetail else { return }
-        isLoadingDetail = true
-        defer { isLoadingDetail = false }
-        if nav.meta.id.hasPrefix("tmdb:"), TMDBSettingsStore.shared.hasAPIKey {
-            fullMeta = try? await TMDBClient.shared.detailMeta(
-                apiKey: TMDBSettingsStore.shared.apiKey,
-                meta: nav.meta
-            )
-        } else {
-            fullMeta = try? await AddonClient.shared.metaDetail(
-                base: nav.base,
-                type: nav.meta.type,
-                id: nav.meta.id
-            )
-        }
-        refreshBookmarkFlag()
-    }
-
-    private func refreshBookmarkFlag() {
-        isBookmarked = library.item(id: displayMeta.id)?.isBookmarked
-            ?? library.item(id: nav.meta.id)?.isBookmarked
-            ?? false
-    }
-
     private func toggleBookmark() {
-        guard let authKey = AuthStore.shared.authKey else {
-            return
-        }
         Task {
-            await LibraryStore.shared.toggleBookmark(authKey: authKey, meta: displayMeta)
+            await viewModel.toggleBookmark()
         }
     }
 
     // MARK: - Sections
-
-    private var expandedHero: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .bottomLeading) {
-                backdropImage
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-                    .clipped()
-
-                LinearGradient(
-                    colors: [.black.opacity(0.08), .black.opacity(0.16), Theme.background],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-
-                LinearGradient(
-                    colors: [Theme.background.opacity(0.7), .clear],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-
-                VStack(alignment: .leading, spacing: 10) {
-                    mediaEyebrow
-
-                    if let logo = displayMeta.logo, !logo.isEmpty {
-                        AsyncImage(url: URL(string: logo)) { phase in
-                            if let image = phase.image {
-                                image.resizable().scaledToFit()
-                            } else {
-                                detailTitle
-                            }
-                        }
-                        .frame(maxWidth: 260, maxHeight: 92, alignment: .leading)
-                    } else {
-                        detailTitle
-                    }
-
-                    metadataBadges
-
-                    if let genres = displayMeta.genres, !genres.isEmpty {
-                        Text(genres.prefix(3).joined(separator: " · "))
-                            .font(.caption)
-                            .foregroundColor(Theme.textSecondary)
-                    }
-
-                    if let description = story {
-                        Text(description)
-                            .font(.subheadline)
-                            .foregroundColor(.white.opacity(0.72))
-                            .lineLimit(3)
-                            .frame(maxWidth: 340, alignment: .leading)
-                    }
-                }
-                .padding(.horizontal, 18)
-                .padding(.bottom, 20)
-            }
-            .frame(width: geometry.size.width, height: geometry.size.height)
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: 490)
-        .ignoresSafeArea(edges: .top)
-        .accessibilityIdentifier("harbor.detail.banner")
-    }
-
-    private var compactHero: some View {
-        GeometryReader { geometry in
-            ZStack {
-                backdropImage
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-                    .clipped()
-
-                LinearGradient(
-                    colors: [.clear, Theme.background.opacity(0.98)],
-                    startPoint: .center,
-                    endPoint: .bottom
-                )
-            }
-            .frame(width: geometry.size.width, height: geometry.size.height)
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: 220)
-        .clipped()
-        .ignoresSafeArea(edges: .top)
-        .accessibilityIdentifier("harbor.detail.banner")
-    }
-
-    private var compactTitleBlock: some View {
-        HStack(alignment: .top, spacing: 14) {
-            PosterCard(
-                meta: Meta(
-                    id: displayMeta.id,
-                    type: displayMeta.type,
-                    name: displayMeta.name,
-                    poster: displayMeta.poster ?? nav.meta.poster,
-                    background: nil,
-                    logo: nil,
-                    description: nil,
-                    releaseInfo: nil,
-                    imdbRating: nil,
-                    genres: nil,
-                    runtime: nil,
-                    country: nil,
-                    network: nil,
-                    videos: nil
-                ),
-                width: 92,
-                showTitle: false
-            )
-
-            VStack(alignment: .leading, spacing: 8) {
-                mediaEyebrow
-
-                Text(displayMeta.name)
-                    .font(.system(size: 26, weight: .bold, design: .serif))
-                    .tracking(-0.5)
-                    .foregroundColor(Theme.textPrimary)
-                    .lineLimit(3)
-
-                metadataBadges
-
-                if let genres = displayMeta.genres, !genres.isEmpty {
-                    Text(genres.prefix(3).joined(separator: " · "))
-                        .font(.caption)
-                        .foregroundColor(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, -44)
-    }
-
-    private var backdropImage: some View {
-        AsyncImage(url: URL(string: (fullMeta?.background ?? nav.meta.background) ?? "")) { phase in
-            if let image = phase.image {
-                image.resizable().scaledToFill()
-            } else {
-                LinearGradient(
-                    colors: [Theme.surfaceRaised, Theme.background],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            }
-        }
-    }
-
-    private var mediaEyebrow: some View {
-        Text(displayMeta.type == "series" ? "HARBOR SERIES" : "HARBOR MOVIE")
-            .font(.system(size: 9, weight: .heavy))
-            .tracking(2.2)
-            .foregroundColor(Theme.accent)
-    }
-
-    private var metadataBadges: some View {
-        HStack(spacing: 8) {
-            if let year = displayMeta.releaseInfo, !year.isEmpty {
-                Badge(text: year)
-            }
-            if let runtime = displayMeta.runtime, !runtime.isEmpty {
-                Badge(text: runtime)
-            }
-            if let rating = displayMeta.imdbRating, !rating.isEmpty {
-                HStack(spacing: 3) {
-                    Text("IMDb")
-                        .font(.system(size: 8, weight: .black))
-                        .foregroundColor(.black)
-                        .padding(.horizontal, 3)
-                        .padding(.vertical, 2)
-                        .background(Color.yellow, in: RoundedRectangle(cornerRadius: 2))
-                    Text(rating).font(.caption.weight(.semibold))
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Theme.surfaceRaised, in: Capsule())
-            }
-        }
-    }
-
-    private var detailTitle: some View {
-        Text(displayMeta.name)
-            .font(.system(size: 36, weight: .bold, design: .serif))
-            .tracking(-1)
-            .foregroundColor(Theme.textPrimary)
-            .lineLimit(3)
-    }
 
     private var actionRow: some View {
         HStack(spacing: 10) {
@@ -359,8 +125,8 @@ struct DetailView: View {
 
             Button(action: toggleBookmark) {
                 Label(
-                    isBookmarked ? "Saved" : "Watchlist",
-                    systemImage: isBookmarked ? "checkmark" : "plus"
+                    viewModel.isBookmarked ? "Saved" : "Watchlist",
+                    systemImage: viewModel.isBookmarked ? "checkmark" : "plus"
                 )
                 .frame(maxWidth: .infinity)
             }
@@ -390,12 +156,11 @@ struct DetailView: View {
     // MARK: - Episodes
 
     private var videos: [MetaVideo] {
-        (fullMeta?.videos ?? nav.meta.videos ?? [])
-            .sorted { ($0.season ?? 0, $0.episode ?? 0) < ($1.season ?? 0, $1.episode ?? 0) }
+        viewModel.videos
     }
 
     private var seasons: [Int] {
-        Array(Set(videos.compactMap(\.season))).sorted()
+        viewModel.seasons
     }
 
     private var activeSeason: Int {
@@ -428,7 +193,7 @@ struct DetailView: View {
                 }
             }
 
-            if isLoadingDetail && videos.isEmpty {
+            if viewModel.isLoading && videos.isEmpty {
                 ProgressView()
                     .tint(Theme.accent)
                     .frame(maxWidth: .infinity)
@@ -458,118 +223,6 @@ struct DetailView: View {
     }
 
     private func isEpisodeWatched(_ video: MetaVideo) -> Bool {
-        guard let item = library.item(id: nav.meta.id),
-              let state = item.state else { return false }
-        if (state.flaggedWatched ?? 0) > 0,
-           let se = item.episodeFromVideoId,
-           video.season == se.season, video.episode == se.episode {
-            return true
-        }
-        return false
-    }
-}
-
-struct Badge: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .font(.caption)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Theme.surfaceRaised, in: Capsule())
-            .foregroundColor(Theme.textPrimary)
-    }
-}
-
-struct EpisodeRow: View {
-    let video: MetaVideo
-    let meta: Meta
-    let watched: Bool
-    let base: String?
-    let source: HarborNavigationSource
-    @State private var playbackSessionId = UUID()
-
-    var body: some View {
-        NavigationLink(
-            value: StreamTarget(
-                metaId: meta.id,
-                type: "series",
-                title: video.displayTitle,
-                videoId: video.id,
-                base: base,
-                metaName: meta.name,
-                poster: meta.poster,
-                background: meta.background,
-                analyticsSource: source,
-                playbackSessionId: playbackSessionId,
-                analyticsSeasonNumber: video.season,
-                analyticsEpisodeNumber: video.episode
-            )
-        ) {
-            HStack(alignment: .top, spacing: 12) {
-                ZStack {
-                    AsyncImage(url: URL(string: video.thumbnail ?? "")) { phase in
-                        if let image = phase.image {
-                            image.resizable().scaledToFill()
-                        } else {
-                            Theme.surfaceRaised
-                        }
-                    }
-                    .frame(width: 110, height: 62)
-                    .clipped()
-
-                    Image(systemName: "play.circle.fill")
-                        .font(.system(size: 26))
-                        .foregroundColor(.white.opacity(0.85))
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        if watched {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 11))
-                                .foregroundColor(Theme.accent)
-                        }
-                        Text(video.displayTitle)
-                            .font(.subheadline.weight(.semibold))
-                            .lineLimit(2)
-                            .foregroundColor(Theme.textPrimary)
-                    }
-                    if let overview = video.overview, !overview.isEmpty {
-                        Text(overview)
-                            .font(.caption)
-                            .foregroundColor(Theme.textSecondary)
-                            .lineLimit(2)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(10)
-            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.cardRadius))
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.cardRadius)
-                    .stroke(Theme.border, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .simultaneousGesture(TapGesture().onEnded {
-            let parameters = AnalyticsService.shared.mediaParameters(
-                mediaType: "series",
-                mediaId: meta.id,
-                source: source,
-                playbackSessionId: playbackSessionId,
-                seasonNumber: video.season,
-                episodeNumber: video.episode
-            )
-            AnalyticsService.shared.log(.playClicked, parameters: parameters)
-            let usedSessionId = playbackSessionId
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                if playbackSessionId == usedSessionId {
-                    playbackSessionId = UUID()
-                }
-            }
-        })
+        viewModel.isEpisodeWatched(video)
     }
 }

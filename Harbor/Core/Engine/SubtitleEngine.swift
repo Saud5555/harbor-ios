@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 @MainActor
@@ -92,62 +93,8 @@ final class SubtitleEngine: ObservableObject {
 
     private func subtitleAddons(for target: StreamTarget) async -> [Addon] {
         let all = await CatalogStore.shared.gatherAddons(authKey: AuthStore.shared.authKey)
-        return all.filter { addon in
-            guard !(addon.manifest.behaviorHints?.configurationRequired ?? false) else { return false }
-            let supportsResource = (addon.manifest.resources ?? []).contains { resource in
-                switch resource {
-                case .named(let name):
-                    return name == "subtitles"
-                case .detailed(let definition):
-                    guard definition.name == "subtitles" else { return false }
-                    if let types = definition.types, !types.isEmpty, !types.contains(target.type) {
-                        return false
-                    }
-                    if let prefixes = definition.idPrefixes, !prefixes.isEmpty,
-                       !prefixes.contains(where: { target.metaId.hasPrefix($0) }) {
-                        return false
-                    }
-                    return true
-                }
-            }
-            guard supportsResource else { return false }
-            if let types = addon.manifest.types, !types.isEmpty, !types.contains(target.type) {
-                return false
-            }
-            if let prefixes = addon.manifest.idPrefixes, !prefixes.isEmpty,
-               !prefixes.contains(where: { target.metaId.hasPrefix($0) }) {
-                return false
-            }
-            return true
+        return all.filter {
+            $0.manifest.supports(resource: "subtitles", type: target.type, id: target.metaId)
         }
-    }
-}
-
-private actor SubtitleFileCache {
-    static let shared = SubtitleFileCache()
-
-    private var files: [URL: URL] = [:]
-
-    func file(for remoteURL: URL) async throws -> URL {
-        if let cached = files[remoteURL], FileManager.default.fileExists(atPath: cached.path) {
-            return cached
-        }
-
-        let (data, response) = try await URLSession.shared.data(from: remoteURL)
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw StremioAPIError.http(http.statusCode)
-        }
-        guard !data.isEmpty else { throw StremioAPIError.decoding }
-
-        let supported = ["srt", "vtt", "ass", "ssa", "sub"]
-        let remoteExtension = remoteURL.pathExtension.lowercased()
-        let fileExtension = supported.contains(remoteExtension) ? remoteExtension : "srt"
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("HarborSubtitles", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let localURL = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension(fileExtension)
-        try data.write(to: localURL, options: .atomic)
-        files[remoteURL] = localURL
-        return localURL
     }
 }

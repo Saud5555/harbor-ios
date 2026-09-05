@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 @MainActor
@@ -161,66 +162,14 @@ final class LibraryStore: ObservableObject {
         duration: Double
     ) async {
         await mutate(authKey: authKey, id: target.metaId) { item in
-            Self.applyMetadata(from: target, to: &item)
-            var state = item.state ?? LibraryState()
-            let videoChanged = target.videoId != nil
-                && state.videoId != nil
-                && state.videoId != target.videoId
-            if videoChanged {
-                state.overallTimeWatched = (state.overallTimeWatched ?? 0) + (state.timeWatched ?? 0)
-                state.flaggedWatched = 0
-            }
-            state.timeOffset = (state.flaggedWatched ?? 0) > 0 ? 0 : offset
-            state.timeWatched = offset
-            state.duration = videoChanged ? duration : max(duration, state.duration ?? 0)
-            if let videoId = target.videoId {
-                state.videoId = videoId
-                let parts = videoId.split(separator: ":")
-                if parts.count >= 3, let s = Int(parts[parts.count - 2]), let e = Int(parts[parts.count - 1]) {
-                    state.season = s
-                    state.episode = e
-                }
-            }
-            state.lastWatched = ISO8601DateFormatter().string(from: Date())
-            state.timesWatched = state.timesWatched ?? 0
-            state.overallTimeWatched = state.overallTimeWatched ?? 0
-            state.noNotif = state.noNotif ?? false
-            item.state = state
-            if item.removed {
-                item.temp = true
-            }
-            item.removed = false
+            item.updatePlaybackProgress(from: target, offset: offset, duration: duration)
         }
     }
 
     /// Flags an episode/movie as fully watched.
     func markWatched(authKey: String, target: StreamTarget) async {
         await mutate(authKey: authKey, id: target.metaId) { item in
-            Self.applyMetadata(from: target, to: &item)
-            var state = item.state ?? LibraryState()
-            state.flaggedWatched = 1
-            state.timeOffset = 0
-            if let videoId = target.videoId { state.videoId = videoId }
-            state.timesWatched = (state.timesWatched ?? 0) + 1
-            state.lastWatched = ISO8601DateFormatter().string(from: Date())
-            item.state = state
-            if item.removed {
-                item.temp = true
-            }
-            item.removed = false
-        }
-    }
-
-    private static func applyMetadata(from target: StreamTarget, to item: inout LibraryItem) {
-        item.type = target.type
-        if item.name.isEmpty {
-            item.name = target.metaName
-        }
-        if item.poster == nil {
-            item.poster = target.poster
-        }
-        if item.background == nil {
-            item.background = target.background
+            item.markPlaybackWatched(from: target)
         }
     }
 
@@ -228,25 +177,13 @@ final class LibraryStore: ObservableObject {
         let existing = item(id: meta.id)
         let shouldRemove = existing?.isBookmarked ?? false
         await mutate(authKey: authKey, id: meta.id) { item in
-            if item.name.isEmpty {
-                item.name = meta.name
-                item.type = meta.type
-                item.poster = meta.poster
-                item.background = meta.background
-                item.posterShape = "poster"
-            }
-            item.removed = shouldRemove
-            item.temp = false
+            item.setBookmarkRemoved(shouldRemove, metadata: meta)
         }
     }
 
     func removeContinueWatching(authKey: String, id: String) async {
         await mutate(authKey: authKey, id: id) { item in
-            var state = item.state ?? LibraryState()
-            state.timeOffset = 0
-            item.state = state
-            item.removed = true
-            item.temp = false
+            item.removeFromContinueWatching()
         }
     }
 
@@ -276,7 +213,7 @@ final class LibraryStore: ObservableObject {
         id: String,
         change: @escaping (inout LibraryItem) -> Void
     ) async {
-        let now = ISO8601DateFormatter().string(from: Date())
+        let now = HarborDate.timestamp()
         var target = item(id: id)
 
         if target == nil {
@@ -312,10 +249,7 @@ final class LibraryStore: ObservableObject {
         do {
             // JSONSerialization cannot encode an arbitrary Codable struct
             // embedded in [String: Any], so bridge it through JSONEncoder.
-            let encoded = try JSONEncoder().encode(item)
-            guard let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] else {
-                throw StremioAPIError.decoding
-            }
+            let object = try JSONObject.encode(item)
             try await StremioAPI.shared.callIgnoringResult(
                 "datastorePut",
                 body: [

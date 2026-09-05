@@ -156,18 +156,3 @@ struct SettingsView: View {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
     }
 }
-
-struct LabeledRow: View {
-    let label: String
-    let value: String
-
-    var body: some View {
-        HStack {
-            Text(label)
-                .foregroundColor(Theme.textPrimary)
-            Spacer()
-            Text(value)
-                .foregroundColor(Theme.textSecondary)
-        }
-    }
-}

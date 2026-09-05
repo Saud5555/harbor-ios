@@ -245,3 +245,52 @@ final class AnalyticsHelperTests: XCTestCase {
         )
     }
 }
+
+final class StreamAnalyticsTests: XCTestCase {
+    func testSelectionParametersUseOneConsistentStreamShape() throws {
+        let url = try XCTUnwrap(URL(string: "https://cdn.example.com/movie.mkv"))
+        let playbackSessionID = try XCTUnwrap(
+            UUID(uuidString: "F1D677C0-BF68-4B62-AE27-D38C650D779B")
+        )
+        let stream = try XCTUnwrap(StreamScorer.score(
+            raw: RawStream(
+                title: "Movie.1080p.WEB-DL.x265",
+                description: nil,
+                url: url.absoluteString,
+                infoHash: nil,
+                fileIdx: nil,
+                behaviorHints: nil,
+                sources: nil,
+                addonName: "Tests"
+            ),
+            id: 1
+        ))
+        let target = StreamTarget(
+            metaId: "tt1234567",
+            type: "movie",
+            title: "Movie",
+            videoId: nil,
+            base: nil,
+            metaName: "Movie",
+            poster: nil,
+            background: nil,
+            playbackSessionId: playbackSessionID
+        )
+
+        let parameters = StreamAnalytics.selectionParameters(
+            stream: stream,
+            position: 2,
+            target: target,
+            availableAddons: [],
+            url: url
+        )
+
+        XCTAssertEqual(parameters[.streamPosition], .int(2))
+        XCTAssertEqual(parameters[.quality], .string("fhd"))
+        XCTAssertEqual(parameters[.resolution], .string("1080p"))
+        XCTAssertEqual(parameters[.codec], .string("hevc"))
+        XCTAssertEqual(parameters[.container], .string("mkv"))
+        XCTAssertEqual(parameters[.streamType], .string("https"))
+        XCTAssertEqual(parameters[.providerType], .string("unknown"))
+    }
+}

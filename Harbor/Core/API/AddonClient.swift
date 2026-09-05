@@ -37,10 +37,7 @@ final class AddonClient {
 
     func setAddonCollection(authKey: String, addons: [Addon]) async throws {
         let raw: [[String: Any]] = try addons.map { addon in
-            let encodedManifest = try JSONEncoder().encode(addon.manifest)
-            guard let manifest = try JSONSerialization.jsonObject(with: encodedManifest) as? [String: Any] else {
-                throw StremioAPIError.decoding
-            }
+            let manifest = try JSONObject.encode(addon.manifest)
             var dict: [String: Any] = [
                 "transportUrl": addon.transportUrl,
                 "manifest": manifest,
@@ -61,19 +58,28 @@ final class AddonClient {
 
     func fetchJSON<T: Decodable>(_ url: URL) async throws -> T {
         let (data, response) = try await session.data(from: url)
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw StremioAPIError.http(http.statusCode)
-        }
+        try HTTPResponse.validate(response)
         return try JSONDecoder().decode(T.self, from: data)
     }
 
     func manifest(transportUrl: String) async throws -> AddonManifest {
         let url = try Self.manifestURL(for: transportUrl)
-        struct ManifestResult: Decodable { let manifest: AddonManifest? }
-        if let result: ManifestResult = try? await fetchJSON(url), let m = result.manifest {
-            return m
+        struct ManifestResult: Decodable {
+            let manifest: AddonManifest
+
+            private enum CodingKeys: String, CodingKey { case manifest }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                if container.contains(.manifest) {
+                    manifest = try container.decode(AddonManifest.self, forKey: .manifest)
+                } else {
+                    manifest = try AddonManifest(from: decoder)
+                }
+            }
         }
-        return try await fetchJSON(url)
+        let result: ManifestResult = try await fetchJSON(url)
+        return result.manifest
     }
 
     static func baseURL(for transportUrl: String) -> String {
@@ -130,11 +136,7 @@ final class AddonClient {
     }
 
     private static func validatedURL(_ string: String) throws -> URL {
-        guard let url = URL(string: string),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https",
-              url.host != nil
-        else {
+        guard let url = HTTPResponse.url(string) else {
             throw AddonClientError.invalidURL
         }
         return url

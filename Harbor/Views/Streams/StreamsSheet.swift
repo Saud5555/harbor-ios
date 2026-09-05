@@ -244,29 +244,14 @@ struct StreamsSheet: View {
         guard let rawURL = stream.raw.url, let url = URL(string: rawURL) else { return }
         let requestedAt = Date()
         let attemptTarget = playbackTargetForNextAttempt()
-        var parameters = AnalyticsService.shared.mediaParameters(
-            mediaType: attemptTarget.type,
-            mediaId: attemptTarget.metaId,
-            source: attemptTarget.analyticsSource,
-            playbackSessionId: attemptTarget.playbackSessionId,
-            seasonNumber: attemptTarget.seasonNumber,
-            episodeNumber: attemptTarget.episodeNumber
+        let position = engine.streams.firstIndex(where: { $0.id == stream.id }).map { $0 + 1 }
+        let parameters = StreamAnalytics.selectionParameters(
+            stream: stream,
+            position: position,
+            target: attemptTarget,
+            availableAddons: engine.availableAddons,
+            url: url
         )
-        if let index = engine.streams.firstIndex(where: { $0.id == stream.id }) {
-            parameters[.streamPosition] = .int(index + 1)
-        }
-        parameters[.quality] = .string(qualityToken(stream.parsed.resolution))
-        parameters[.resolution] = .string(resolutionToken(stream.parsed.resolution))
-        if let codec = stream.parsed.codec {
-            parameters[.codec] = .string(codec.lowercased())
-        }
-        if let container = containerToken(url: url) {
-            parameters[.container] = .string(container)
-        }
-        if let streamType = streamTypeToken(for: stream, url: url) {
-            parameters[.streamType] = .string(streamType)
-        }
-        parameters[.providerType] = .string(providerType(for: stream).rawValue)
         AnalyticsService.shared.log(.streamSelected, parameters: parameters)
         AnalyticsService.shared.log(.playbackStartRequested, parameters: parameters)
         playbackSelection = PlaybackSelection(
@@ -295,108 +280,4 @@ struct StreamsSheet: View {
         )
     }
 
-    private func providerType(for stream: ScoredStream) -> HarborAddonType {
-        guard let id = stream.raw.addonId,
-              let addon = engine.availableAddons.first(where: { $0.id == id })
-        else { return .unknown }
-        return addon.flags?.official == true ? .official : .thirdParty
-    }
-
-    private func qualityToken(_ resolution: ResolutionRank) -> String {
-        switch resolution {
-        case .uhd2160: return "uhd"
-        case .fhd1080: return "fhd"
-        case .hd720: return "hd"
-        case .sd: return "sd"
-        case .unknown: return "unknown"
-        }
-    }
-
-    private func resolutionToken(_ resolution: ResolutionRank) -> String {
-        switch resolution {
-        case .uhd2160: return "2160p"
-        case .fhd1080: return "1080p"
-        case .hd720: return "720p"
-        case .sd: return "sd"
-        case .unknown: return "unknown"
-        }
-    }
-
-    private func containerToken(url: URL) -> String? {
-        let supported = Set(["mkv", "mp4", "webm", "avi", "mov", "m3u8", "ts"])
-        let value = url.pathExtension.lowercased()
-        return supported.contains(value) ? value : nil
-    }
-
-    private func streamTypeToken(for stream: ScoredStream, url: URL) -> String? {
-        if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
-            return scheme
-        }
-        if let infoHash = stream.raw.infoHash, !infoHash.isEmpty {
-            return "torrent"
-        }
-        return nil
-    }
-}
-
-struct StreamRow: View {
-    let scored: ScoredStream
-    let tierColor: Color
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text(scored.tierLabel)
-                .font(.system(size: 11, weight: .heavy))
-                .frame(width: 44)
-                .padding(.vertical, 5)
-                .background(tierColor.opacity(0.25), in: RoundedRectangle(cornerRadius: 7))
-                .foregroundColor(tierColor)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(StreamScorer.cleanTitle(scored.raw.title ?? scored.raw.description ?? "Stream"))
-                    .font(.footnote.weight(.medium))
-                    .foregroundColor(Theme.textPrimary)
-                    .lineLimit(2)
-
-                HStack(spacing: 6) {
-                    Label(scored.raw.addonName ?? "", systemImage: "puzzlepiece.extension")
-                        .lineLimit(1)
-
-                    if let size = scored.parsed.sizeGB {
-                        Text(String(format: "%.1f GB", size))
-                    }
-
-                    if let seeders = scored.parsed.seeders {
-                        Label("\(seeders)", systemImage: "person.2")
-                    }
-
-                    if scored.parsed.hdr != .none {
-                        Text(scored.parsed.hdr.rawValue)
-                            .foregroundColor(.orange)
-                    }
-
-                    if scored.parsed.hasAtmos || scored.parsed.isLosslessAudio {
-                        Image(systemName: "hifispeaker.2.fill")
-                            .foregroundColor(.pink)
-                    }
-                }
-                .font(.system(size: 10))
-                .foregroundColor(Theme.textSecondary)
-            }
-
-            Spacer(minLength: 0)
-
-            Image(systemName: scored.playable ? "play.circle.fill" : "link.circle")
-                .font(.system(size: 24))
-                .foregroundColor(scored.playable ? Theme.accent : Theme.textSecondary.opacity(0.6))
-                .padding(.top, 2)
-        }
-        .padding(12)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.cardRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.cardRadius)
-                .stroke(scored.playable ? Theme.border : Theme.border.opacity(0.45), lineWidth: 1)
-        )
-        .opacity(scored.playable ? 1 : 0.65)
-    }
 }

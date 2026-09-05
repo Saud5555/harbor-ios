@@ -1,29 +1,24 @@
-import SwiftUI
+import Combine
+import Foundation
 
 @MainActor
 final class AddonManager: ObservableObject {
     static let shared = AddonManager()
 
     /// Cloud-only collection (no synthesized Cinemeta).
-    @Published var cloudAddons: [Addon] = []
-    @Published var isLoading = false
-    @Published var statusMessage: String?
-    @Published var errorMessage: String?
+    @Published private(set) var cloudAddons: [Addon] = []
+    @Published private(set) var isLoading = false
+    @Published private(set) var statusMessage: String?
+    @Published private(set) var errorMessage: String?
 
     private init() {}
 
     var syncedStreamAddons: [Addon] {
-        cloudAddons.filter { addon in
-            !(addon.manifest.behaviorHints?.configurationRequired ?? false)
-                && (addon.manifest.resources ?? []).contains { $0.typeName == "stream" }
-        }
+        cloudAddons.filter { $0.manifest.advertises(resource: "stream") }
     }
 
     var syncedSubtitleAddons: [Addon] {
-        cloudAddons.filter { addon in
-            !(addon.manifest.behaviorHints?.configurationRequired ?? false)
-                && (addon.manifest.resources ?? []).contains { $0.typeName == "subtitles" }
-        }
+        cloudAddons.filter { $0.manifest.advertises(resource: "subtitles") }
     }
 
     func hasEmbeddedDebridConfiguration(_ addon: Addon) -> Bool {
@@ -94,38 +89,15 @@ final class AddonManager: ObservableObject {
             return false
         }
         let transportURL = AddonClient.baseURL(for: trimmed) + "/manifest.json"
-        isLoading = true
-        errorMessage = nil
-        statusMessage = nil
-        defer {
-            if AuthStore.shared.authKey == authKey {
-                isLoading = false
-            }
-        }
-        do {
-            let manifest = try await AddonClient.shared.manifest(transportUrl: transportURL)
-            guard AuthStore.shared.authKey == authKey else { return false }
-            var updated = cloudAddons.filter {
-                AddonClient.baseURL(for: $0.transportUrl) != AddonClient.baseURL(for: transportURL)
-            }
-            updated.append(
-                Addon(
-                    transportUrl: transportURL,
-                    manifest: manifest,
-                    flags: AddonFlags(official: false, protected: false)
-                )
-            )
-            try await AddonClient.shared.setAddonCollection(authKey: authKey, addons: updated)
-            guard AuthStore.shared.authKey == authKey else { return false }
-            cloudAddons = updated
-            statusMessage = "Installed \(manifest.name)"
-            CatalogStore.shared.invalidate()
-            return true
-        } catch {
-            guard AuthStore.shared.authKey == authKey else { return false }
-            errorMessage = "Could not load manifest: \(error.localizedDescription)"
-            return false
-        }
+        return await install(
+            authKey: authKey,
+            transportURL: transportURL,
+            replacing: {
+                AddonClient.baseURL(for: $0.transportUrl) == AddonClient.baseURL(for: transportURL)
+            },
+            successMessage: { "Installed \($0.name)" },
+            errorPrefix: "Could not install addon"
+        )
     }
 
     func installTorrentio(authKey: String) async -> Bool {
@@ -137,6 +109,30 @@ final class AddonManager: ObservableObject {
         let base = "https://torrentio.strem.fun"
         let transportUrl = configParts.isEmpty ? base + "/manifest.json" : base + "/" + configParts.joined(separator: "|") + "/manifest.json"
 
+        return await install(
+            authKey: authKey,
+            transportURL: transportUrl,
+            replacing: { $0.transportUrl.lowercased().contains("torrentio.strem.fun") },
+            successMessage: { _ in
+                configParts.isEmpty
+                    ? "Installed Torrentio (no debrid keys)"
+                    : "Installed Torrentio with \(configParts.count) debrid key(s)"
+            },
+            errorPrefix: "Torrentio install failed"
+        )
+    }
+
+    func isRemovable(_ addon: Addon) -> Bool {
+        !(addon.flags?.protected ?? false) && !(addon.flags?.official ?? false)
+    }
+
+    private func install(
+        authKey: String,
+        transportURL: String,
+        replacing shouldReplace: (Addon) -> Bool,
+        successMessage: (AddonManifest) -> String,
+        errorPrefix: String
+    ) async -> Bool {
         isLoading = true
         errorMessage = nil
         statusMessage = nil
@@ -145,75 +141,26 @@ final class AddonManager: ObservableObject {
                 isLoading = false
             }
         }
+
         do {
-            let manifest = try await AddonClient.shared.manifest(transportUrl: transportUrl)
+            let manifest = try await AddonClient.shared.manifest(transportUrl: transportURL)
             guard AuthStore.shared.authKey == authKey else { return false }
-            var updated = cloudAddons.filter {
-                !$0.transportUrl.lowercased().contains("torrentio.strem.fun")
-            }
-            updated.append(
-                Addon(
-                    transportUrl: transportUrl,
-                    manifest: manifest,
-                    flags: AddonFlags(official: false, protected: false)
-                )
-            )
+            var updated = cloudAddons.filter { !shouldReplace($0) }
+            updated.append(Addon(
+                transportUrl: transportURL,
+                manifest: manifest,
+                flags: AddonFlags(official: false, protected: false)
+            ))
             try await AddonClient.shared.setAddonCollection(authKey: authKey, addons: updated)
             guard AuthStore.shared.authKey == authKey else { return false }
             cloudAddons = updated
-            statusMessage = configParts.isEmpty
-                ? "Installed Torrentio (no debrid keys)"
-                : "Installed Torrentio with \(configParts.count) debrid key(s)"
+            statusMessage = successMessage(manifest)
             CatalogStore.shared.invalidate()
             return true
         } catch {
             guard AuthStore.shared.authKey == authKey else { return false }
-            errorMessage = "Torrentio install failed: \(error.localizedDescription)"
+            errorMessage = "\(errorPrefix): \(error.localizedDescription)"
             return false
         }
-    }
-
-    func isRemovable(_ addon: Addon) -> Bool {
-        !(addon.flags?.protected ?? false) && !(addon.flags?.official ?? false)
-    }
-}
-
-enum DebridProvider: String, CaseIterable, Identifiable {
-    case realDebrid = "realdebrid"
-    case allDebrid = "alldebrid"
-    case premiumize = "premiumize"
-    case debridLink = "debridlink"
-    case torbox = "torbox"
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .realDebrid: return "Real-Debrid"
-        case .allDebrid: return "AllDebrid"
-        case .premiumize: return "Premiumize"
-        case .debridLink: return "Debrid-Link"
-        case .torbox: return "TorBox"
-        }
-    }
-
-    var queryName: String { rawValue }
-
-    private var keychainAccount: String { "debrid.\(rawValue)" }
-
-    static func loadKey(_ provider: DebridProvider) -> String? {
-        Keychain.string(for: "debrid.\(provider.rawValue)")
-    }
-
-    func saveKey(_ value: String) {
-        if value.trimmingCharacters(in: .whitespaces).isEmpty {
-            Keychain.delete(account: keychainAccount)
-        } else {
-            Keychain.set(value, for: keychainAccount)
-        }
-    }
-
-    func loadExisting() -> String {
-        Self.loadKey(self) ?? ""
     }
 }

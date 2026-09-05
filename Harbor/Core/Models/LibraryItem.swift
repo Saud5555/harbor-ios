@@ -113,13 +113,8 @@ struct LibraryBehaviorHints: Codable, Equatable {
 extension LibraryItem {
     /// Episode info encoded in a Stremio video_id ("tt123:1:4").
     var episodeFromVideoId: (season: Int, episode: Int)? {
-        guard let vid = state?.videoId else { return nil }
-        let parts = vid.split(separator: ":")
-        guard parts.count >= 3,
-              let season = Int(parts[parts.count - 2]),
-              let episode = Int(parts[parts.count - 1])
-        else { return nil }
-        return (season, episode)
+        guard let coordinates = EpisodeCoordinates(videoID: state?.videoId) else { return nil }
+        return (coordinates.season, coordinates.episode)
     }
 
     var isContinueWatching: Bool {
@@ -149,19 +144,11 @@ extension LibraryItem {
     }
 
     var sortTimestamp: TimeInterval {
-        if let lastWatched = state?.lastWatched, let t = Self.parseISO(lastWatched) {
-            return t
-        }
-        return Self.parseISO(mtime) ?? 0
-    }
-
-    private static func parseISO(_ string: String) -> TimeInterval? {
-        let iso = ISO8601DateFormatter()
-        if let date = iso.date(from: string) {
+        if let lastWatched = state?.lastWatched,
+           let date = HarborDate.parseISO8601(lastWatched) {
             return date.timeIntervalSince1970
         }
-        iso.formatOptions.insert(.withFractionalSeconds)
-        return iso.date(from: string)?.timeIntervalSince1970
+        return HarborDate.parseISO8601(mtime)?.timeIntervalSince1970 ?? 0
     }
 
     func asMeta() -> Meta {

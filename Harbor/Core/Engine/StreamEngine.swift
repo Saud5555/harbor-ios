@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 @MainActor
@@ -20,11 +21,11 @@ final class StreamEngine: ObservableObject {
         }
     }
 
-    @Published var streams: [ScoredStream] = []
+    @Published private(set) var streams: [ScoredStream] = []
     @Published private(set) var availableAddons: [Addon] = []
-    @Published var progress: [AddonProgress] = []
-    @Published var isLoading = false
-    @Published var errorMessage: String?
+    @Published private(set) var progress: [AddonProgress] = []
+    @Published private(set) var isLoading = false
+    @Published private(set) var errorMessage: String?
 
     private var nextId = 0
     private var loadToken = UUID()
@@ -33,29 +34,8 @@ final class StreamEngine: ObservableObject {
     /// All addons that declare a `stream` resource usable for this target.
     func streamAddons(for target: StreamTarget) async -> [Addon] {
         let all = await CatalogStore.shared.gatherAddons(authKey: AuthStore.shared.authKey)
-        return all.filter { addon in
-            guard !(addon.manifest.behaviorHints?.configurationRequired ?? false) else { return false }
-            let resources = addon.manifest.resources ?? []
-            let hasStreamResource = resources.contains { resource in
-                switch resource {
-                case .named(let name):
-                    return name == "stream"
-                case .detailed(let def):
-                    if def.name != "stream" { return false }
-                    if let types = def.types, !types.isEmpty, !types.contains(target.type) { return false }
-                    return true
-                }
-            }
-            guard hasStreamResource else { return false }
-
-            if let types = addon.manifest.types, !types.isEmpty, !types.contains(target.type) {
-                return false
-            }
-            if let prefixes = addon.manifest.idPrefixes, !prefixes.isEmpty,
-               !prefixes.contains(where: { target.metaId.hasPrefix($0) }) {
-                return false
-            }
-            return true
+        return all.filter {
+            $0.manifest.supports(resource: "stream", type: target.type, id: target.metaId)
         }
     }
 

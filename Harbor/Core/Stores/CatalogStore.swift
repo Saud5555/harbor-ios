@@ -1,26 +1,5 @@
+import Combine
 import Foundation
-
-struct Rail: Identifiable {
-    let id: String
-    let title: String
-    let type: String
-    var metas: [Meta]
-    let base: String
-    let catalogId: String
-    let extras: [String: String]?
-}
-
-struct CatalogSearchResponse {
-    enum Status: String {
-        case success
-        case partial
-        case failure
-    }
-
-    let results: [Meta]
-    let status: Status
-    let errorCategory: HarborAnalyticsErrorCategory?
-}
 
 @MainActor
 final class CatalogStore: ObservableObject {
@@ -86,7 +65,7 @@ final class CatalogStore: ObservableObject {
                 // that was already synced during this session.
                 collected = AddonManager.shared.cloudAddons
                 if collected.isEmpty {
-                    collected = existing.filter { $0.manifest.id != Self.cinemetaManifest.id }
+                    collected = existing.filter { $0.manifest.id != Cinemeta.manifest.id }
                 }
             }
         } else {
@@ -94,7 +73,7 @@ final class CatalogStore: ObservableObject {
         }
         let cinemeta = Addon(
             transportUrl: AddonClient.cinemetaBase + "/manifest.json",
-            manifest: Self.cinemetaManifest,
+            manifest: Cinemeta.manifest,
             flags: AddonFlags(official: true, protected: false)
         )
         if let existingIndex = collected.firstIndex(where: {
@@ -200,37 +179,6 @@ final class CatalogStore: ObservableObject {
             .joined(separator: " ")
         return "\(cleaned)::\(type)"
     }
-
-    static let cinemetaManifest = AddonManifest(
-        id: "com.linvo.cinemeta",
-        name: "Cinemeta",
-        version: "3.0",
-        description: "Official Stremio metadata for movies and series.",
-        logo: "https://images.metahub.space/logo/medium/tt5491982/img",
-        background: nil,
-        contactEmail: nil,
-        types: ["movie", "series"],
-        resources: [
-            .detailed(AddonResourceDef(name: "catalog", types: ["movie", "series"], idPrefixes: ["tt"])),
-            .detailed(AddonResourceDef(name: "meta", types: ["movie", "series"], idPrefixes: ["tt"])),
-        ],
-        catalogs: [
-            AddonCatalogDef(type: "movie", id: "top", name: "Trending Movies", extra: [
-                AddonCatalogExtra(name: "search", isRequired: false, options: nil),
-                AddonCatalogExtra(name: "skip", isRequired: false, options: nil),
-            ]),
-            AddonCatalogDef(type: "series", id: "top", name: "Trending Series", extra: [
-                AddonCatalogExtra(name: "search", isRequired: false, options: nil),
-                AddonCatalogExtra(name: "skip", isRequired: false, options: nil),
-            ]),
-            AddonCatalogDef(type: "movie", id: "popular", name: "Popular Movies", extra: nil),
-            AddonCatalogDef(type: "series", id: "popular", name: "Popular Series", extra: nil),
-            AddonCatalogDef(type: "movie", id: "year", name: "New Movies", extra: nil),
-            AddonCatalogDef(type: "series", id: "year", name: "New Series", extra: nil),
-        ],
-        idPrefixes: ["tt"],
-        behaviorHints: nil
-    )
 
     // MARK: - Search
 

@@ -41,4 +41,49 @@ final class TMDBCatalogTests: XCTestCase {
         XCTAssertEqual(genres["History"], 36)
         XCTAssertEqual(genres["Sci-Fi"], 878)
     }
+
+    @MainActor
+    func testCatalogStoreDiscardsAStaleRegionResponse() async {
+        let store = TMDBCatalogStore(client: DelayedTMDBCollectionLoader())
+
+        let slowRequest = Task {
+            await store.loadHome(apiKey: "key", region: "US", force: true)
+        }
+        try? await Task.sleep(nanoseconds: 5_000_000)
+        let currentRequest = Task {
+            await store.loadHome(apiKey: "key", region: "GB", force: true)
+        }
+        await slowRequest.value
+        await currentRequest.value
+
+        XCTAssertEqual(store.homeTrending.first?.name, "GB result")
+        XCTAssertFalse(store.isLoadingHome)
+    }
+}
+
+private final class DelayedTMDBCollectionLoader: @unchecked Sendable, TMDBCollectionLoading {
+    func collection(
+        apiKey _: String,
+        definition _: TMDBCollectionDefinition,
+        region: String
+    ) async throws -> [Meta] {
+        let delay: UInt64 = region == "US" ? 100_000_000 : 1_000_000
+        try await Task.sleep(nanoseconds: delay)
+        return [Meta(
+            id: "tmdb:movie:1",
+            type: "movie",
+            name: "\(region) result",
+            poster: nil,
+            background: nil,
+            logo: nil,
+            description: nil,
+            releaseInfo: nil,
+            imdbRating: nil,
+            genres: nil,
+            runtime: nil,
+            country: nil,
+            network: nil,
+            videos: nil
+        )]
+    }
 }

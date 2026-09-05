@@ -57,16 +57,7 @@ struct StreamTarget: Hashable {
         hasher.combine(playbackSessionId)
     }
 
+    var episodeCoordinates: EpisodeCoordinates? { EpisodeCoordinates(videoID: videoId) }
     var seasonNumber: Int? { analyticsSeasonNumber ?? episodeCoordinates?.season }
     var episodeNumber: Int? { analyticsEpisodeNumber ?? episodeCoordinates?.episode }
-
-    private var episodeCoordinates: (season: Int, episode: Int)? {
-        guard let videoId else { return nil }
-        let parts = videoId.split(separator: ":")
-        guard parts.count >= 3,
-              let season = Int(parts[parts.count - 2]),
-              let episode = Int(parts[parts.count - 1])
-        else { return nil }
-        return (season, episode)
-    }
 }

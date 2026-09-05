@@ -87,6 +87,9 @@ open Harbor.xcworkspace
 
 CI regenerates everything on each push — no Xcode project files are committed.
 
+See [Architecture](docs/ARCHITECTURE.md) for source boundaries, state ownership,
+and concurrency rules.
+
 ## Credits
 
 - [Harbor](https://github.com/harborstremio/harbor) — design inspiration, MIT licensed

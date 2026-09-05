@@ -76,7 +76,7 @@ struct MetaVideo: Codable, Identifiable, Hashable {
         season = try c.decodeIfPresent(Int.self, forKey: .season)
         episode = try c.decodeIfPresent(Int.self, forKey: .episode)
         if let str = try c.decodeIfPresent(String.self, forKey: .released) {
-            released = Self.parseDate(str)
+            released = HarborDate.parseISO8601(str)
         } else {
             released = nil
         }
@@ -94,15 +94,6 @@ struct MetaVideo: Codable, Identifiable, Hashable {
         try c.encodeIfPresent(episode, forKey: .episode)
         try c.encodeIfPresent(thumbnail, forKey: .thumbnail)
         try c.encodeIfPresent(overview, forKey: .description)
-    }
-
-    private static func parseDate(_ string: String) -> Date? {
-        let iso = ISO8601DateFormatter()
-        if let date = iso.date(from: string) {
-            return date
-        }
-        iso.formatOptions.insert(.withFractionalSeconds)
-        return iso.date(from: string)
     }
 
     var displayTitle: String {
