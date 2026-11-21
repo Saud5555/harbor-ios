@@ -78,6 +78,7 @@ final class TMDBCatalogStore: ObservableObject {
 
         let definitions = TMDBCollectionDefinition.requestedCollections()
         var loaded = Array<[Meta]?>(repeating: nil, count: definitions.count)
+        let client = self.client
         await withTaskGroup(of: (Int, [Meta]).self) { group in
             for (index, definition) in definitions.enumerated() {
                 group.addTask {
